@@ -142,45 +142,76 @@ def load_and_index(folder: str) -> chromadb.Collection:
     return collection
 
 
-def ask(question: str, collection: chromadb.Collection, api_key: str) -> str:
+def ask(question: str, collection: chromadb.Collection, api_key: str) -> None:
     results = collection.query(query_texts=[question], n_results=TOP_K)
 
     docs = results["documents"][0]
     metas = results["metadatas"][0]
     if not docs:
-        return "[No relevant context found]"
+        print("\nBot: [No relevant context found]\n")
+        return
 
     context = "\n\n---\n\n".join(
         f"[{m.get('source', '')}]\n{d}" for d, m in zip(docs, metas)
     )
     prompt = PROMPT.format(context=context, question=question)
 
-    client = ollama.Client(
+    llm = ollama.Client(
         host=OLLAMA_CLOUD_URL,
         headers={"Authorization": f"Bearer {api_key}"},
     )
-    response = client.generate(model=LLM_MODEL, prompt=prompt)
-    raw = response["response"].strip()
 
-    if raw.upper() == "IRRELEVANT":
-        return "[No relevant answer found]"
+    # Stream tokens with a state machine: pre -> thinking -> answer
+    section = "pre"
+    buf = ""
 
-    # Parse THINKING / ANSWER blocks
-    thinking, answer = "", raw
-    if "THINKING:" in raw and "ANSWER:" in raw:
-        parts = raw.split("ANSWER:", 1)
-        thinking_block = parts[0].replace("THINKING:", "").strip()
-        answer = parts[1].strip()
+    for chunk in llm.generate(model=LLM_MODEL, prompt=prompt, stream=True):
+        token = chunk["response"]
+        buf += token
 
-        print("\n  Brain line:")
-        print("  " + "-" * 51)
-        for line in thinking_block.splitlines():
-            line = line.strip()
-            if line:
-                print(f"  {line}")
-        print("  " + "-" * 51 + "\n")
+        if section == "pre":
+            if "THINKING:" in buf:
+                section = "thinking"
+                tail = buf.split("THINKING:", 1)[1].lstrip("\n")
+                print("\n  Brain line:")
+                print("  " + "-" * 51)
+                if tail:
+                    print("  " + tail, end="", flush=True)
+                buf = ""
 
-    return answer
+        elif section == "thinking":
+            if "ANSWER:" in buf:
+                section = "answer"
+                before, after = buf.split("ANSWER:", 1)
+                if before.strip():
+                    print(before.rstrip(), end="", flush=True)
+                print("\n  " + "-" * 51 + "\n")
+                print("Bot: ", end="", flush=True)
+                after = after.lstrip("\n")
+                if after.upper().strip() == "IRRELEVANT":
+                    print("[No relevant answer found]", flush=True)
+                    print()
+                    return
+                if after:
+                    print(after, end="", flush=True)
+                buf = ""
+            else:
+                # Print safe portion, keep a small tail to avoid splitting delimiter
+                if len(buf) > 9:
+                    safe, buf = buf[:-8], buf[-8:]
+                    print(safe, end="", flush=True)
+
+        elif section == "answer":
+            print(buf, end="", flush=True)
+            buf = ""
+
+    # Flush anything remaining
+    if buf.strip():
+        if buf.upper().strip() == "IRRELEVANT":
+            print("[No relevant answer found]", flush=True)
+        else:
+            print(buf, end="", flush=True)
+    print("\n")
 
 # ─── Main ─────────────────────────────────────────────────────────────────────
 
@@ -216,8 +247,7 @@ def main():
         if question == "$quit":
             print("Bye.")
             break
-        answer = ask(question, collection, api_key)
-        print(f"\nBot: {answer}\n")
+        ask(question, collection, api_key)
 
 
 if __name__ == "__main__":
