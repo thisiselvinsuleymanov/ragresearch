@@ -36,27 +36,39 @@ CHUNK_OVERLAP    = 50     # words
 TOP_K            = 5
 
 PROMPT = """\
-You are a helpful assistant. Use ONLY the context below to answer.
-If the context does not contain enough information, reply with exactly: IRRELEVANT
+You are a strict document extraction system. You have no knowledge, memory, \
+or intelligence of your own. You do not know anything that is not written \
+in the context below.
+
+ABSOLUTE RULES:
+  1. Every piece of information in your answer must be traceable word-for-word \
+to the context below.
+  2. Do not add, expand, define, or describe anything beyond what is literally \
+written in the context.
+  3. Do not use any external source — not your training data, not general \
+knowledge, not inference, not reasoning from prior understanding.
+  4. Do not paraphrase in a way that introduces meaning not present in the context.
+  5. If the answer is not fully and explicitly contained in the context, reply \
+with exactly one word: IRRELEVANT
 
 Context:
 {context}
 
 Question: {question}
 
-Before writing your answer, reason through it step by step.
-For every fact or phrase you use, state exactly where it comes from:
-  - quote the relevant part of the context and name the source file, OR
-  - mark it as [language/grammar] if it is just a connecting word with no factual content.
+Before writing your answer, verify every word you plan to write against the \
+context. If you cannot point to the exact text in the context that supports it, \
+remove it.
 
 Respond in this exact format:
 
 THINKING:
-- [fact or phrase you will use] -> [source: filename.docx, chunk excerpt] or [language/grammar]
+- [word or phrase you will use] -> [exact quote from context that proves it] \
+or [language/grammar] if it is a connecting word only
 - ...
 
 ANSWER:
-[your final answer]"""
+[your answer using only words traceable to the context above]"""
 
 # ─── Text splitting (no external deps) ───────────────────────────────────────
 
