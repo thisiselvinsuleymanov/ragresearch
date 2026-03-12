@@ -1,0 +1,14 @@
+# Python
+.venv/
+__pycache__/
+*.pyc
+*.pyo
+
+# Environment (contains secrets)
+.env
+
+# Vector DB (large, rebuild on demand)
+chroma_db/
+
+# macOS
+.DS_Store
