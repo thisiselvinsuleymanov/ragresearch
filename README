@@ -1,0 +1,410 @@
+RAG RESEARCH SYSTEM
+===================
+
+A lightweight Retrieval-Augmented Generation (RAG) system for querying document
+collections through a natural language chat interface. The system combines local
+vector embeddings with a cloud-hosted large language model to deliver accurate,
+context-grounded answers from your own documents.
+
+
+OVERVIEW
+--------
+
+This system indexes .docx documents into a persistent local vector database and
+enables interactive question-answering over the indexed content. Retrieval is
+performed semantically using dense vector search; generation is handled by Ollama
+Cloud's hosted LLM endpoint.
+
+Architecture:
+
+  .docx files  -->  text extraction  -->  chunking
+       |
+       v
+  ChromaDB (local vector store, persistent)
+       |
+       v
+  semantic search (all-MiniLM-L6-v2, ONNX, runs locally)
+       |
+       v
+  Ollama Cloud LLM (gpt-oss:120b-cloud)
+       |
+       v
+  answer streamed to terminal
+
+
+STACK
+-----
+
+  Component         Technology
+  ─────────────────────────────────────────────────────
+  Vector store      ChromaDB  (persistent, local)
+  Embeddings        all-MiniLM-L6-v2  (ONNX, local)
+  LLM               Ollama Cloud  (gpt-oss:120b-cloud)
+  Document parser   python-docx
+  Runtime           Python 3.12
+
+
+REQUIREMENTS
+------------
+
+  - Python 3.12  (Python 3.14 is NOT supported — ML packages require 3.12)
+  - An Ollama Cloud account and API key  (https://ollama.com/settings/keys)
+  - .docx documents to query
+
+
+SETUP — macOS / Linux
+---------------------
+
+1. Clone the repository
+
+     git clone <repository-url>
+     cd ragresearch
+
+2. Install Python 3.12 (if not already installed)
+
+     macOS:
+       brew install python@3.12
+
+     Linux (Ubuntu/Debian):
+       sudo apt install python3.12 python3.12-venv
+
+3. Create a virtual environment
+
+     python3.12 -m venv .venv
+     source .venv/bin/activate
+
+4. Install dependencies
+
+     pip install -r requirements.txt
+
+5. Configure your API key
+
+   Create a file named .env in the project root:
+
+     OLLAMA_API_KEY=your_ollama_api_key_here
+
+   Get your key at: https://ollama.com/settings/keys
+
+6. Add documents
+
+   Place your .docx files in a folder (e.g. data/):
+
+     mkdir data
+     cp your_documents/*.docx data/
+
+7. Run
+
+     python rag.py data
+
+
+SETUP — Windows
+---------------
+
+1. Install Python 3.12
+
+   Download from: https://www.python.org/downloads/release/python-3128/
+   During installation, check "Add python.exe to PATH".
+
+2. Open Command Prompt and navigate to the project folder
+
+     cd path\to\ragresearch
+
+3. Create a virtual environment
+
+     python -m venv .venv
+     .venv\Scripts\activate
+
+4. Install dependencies
+
+     pip install -r requirements.txt
+
+5. Configure your API key
+
+   Create a file named .env in the project root:
+
+     OLLAMA_API_KEY=your_ollama_api_key_here
+
+6. Add documents
+
+     mkdir data
+
+   Copy your .docx files into the data\ folder.
+
+7. Run
+
+     python rag.py data
+
+
+USAGE
+-----
+
+Start the chat interface by pointing the program at a folder of .docx files:
+
+  python rag.py <path/to/folder>
+
+Example:
+
+  python rag.py data
+
+On first run the system will:
+  1. Download the embedding model (~90 MB, one time only)
+  2. Extract and chunk all .docx files in the folder
+  3. Embed and store all chunks in ChromaDB
+  4. Open the interactive chat prompt
+
+Subsequent runs load the existing index instantly.
+
+Chat commands:
+
+  You: <your question>   ask anything about the documents
+  $quit                  exit the program
+
+Example session:
+
+  You: What are the main themes in the document?
+  Bot: The document explores ...
+
+  You: Who is the author?
+  Bot: The author is ...
+
+  You: $quit
+  Bye.
+
+
+INDEX MANAGEMENT
+----------------
+
+The vector index is stored in ./chroma_db/. It persists between runs.
+
+To rebuild the index (e.g. after adding or removing documents):
+
+  macOS/Linux:   rm -rf chroma_db/
+  Windows:       rmdir /s /q chroma_db
+
+Then run the program again to re-index.
+
+
+CONFIGURATION
+-------------
+
+All tunable parameters are at the top of rag.py:
+
+  Parameter          Default    Description
+  ────────────────────────────────────────────────────────────────
+  LLM_MODEL          gpt-oss:120b-cloud   Ollama Cloud model name
+  EMBED_MODEL        all-MiniLM-L6-v2     Local ONNX embedding model
+  CHROMA_DIR         ./chroma_db          Vector store directory
+  CHUNK_SIZE         500                  Words per chunk
+  CHUNK_OVERLAP      50                   Overlapping words between chunks
+  TOP_K              5                    Chunks retrieved per query
+
+
+SUPPORTED FILE FORMATS
+----------------------
+
+  .docx   Microsoft Word documents
+
+Additional formats (PDF, .txt, etc.) can be added by extending the
+load_and_index() function in rag.py.
+
+
+HOW IT WORKS — DETAILED LOGIC
+-----------------------------
+
+The system operates in two distinct phases: an indexing phase (run once per
+document set) and a query phase (run on every question). Understanding both
+phases explains why the system is fast, accurate, and safe.
+
+
+  PHASE 1 — INDEXING  (load_and_index)
+  ─────────────────────────────────────
+
+  Step 1: Startup check
+
+    When you run `python rag.py data`, the program first checks whether a
+    ChromaDB collection named after the folder already exists on disk inside
+    ./chroma_db/. If it does, the entire indexing phase is skipped and the
+    existing collection is loaded directly into memory. This is why subsequent
+    runs start instantly.
+
+    If no index exists, the full pipeline below runs.
+
+  Step 2: Document parsing  (python-docx)
+
+    Every .docx file in the folder is opened with python-docx, which reads
+    the internal XML structure of the Word document. Only paragraph-level text
+    is extracted — tables, headers, and footers are not currently included.
+    All extracted text is lowercased to normalize the vocabulary before
+    embedding, which improves matching consistency.
+
+  Step 3: Text chunking  (split_text)
+
+    Raw document text cannot be embedded as a whole — embedding models have a
+    fixed token limit and long texts lose semantic precision. The text is
+    therefore split into overlapping word-based windows:
+
+      - CHUNK_SIZE   = 500 words  per chunk
+      - CHUNK_OVERLAP = 50 words  shared between consecutive chunks
+
+    The overlap is critical. Without it, a sentence that falls at the boundary
+    between two chunks would be split in half. With 50 words of overlap, the
+    context around every boundary exists in at least one complete chunk.
+
+    Example with size=5, overlap=2 on "A B C D E F G H":
+
+      chunk 0:  A B C D E
+      chunk 1:  D E F G H
+      chunk 2:  G H
+      (step = 5 - 2 = 3 words forward each time)
+
+    Each chunk is stored alongside metadata recording which source file it
+    came from, so answers can later be attributed to a specific document.
+
+  Step 4: Embedding  (all-MiniLM-L6-v2 via ONNX)
+
+    Each text chunk is passed through the all-MiniLM-L6-v2 embedding model,
+    which converts it into a 384-dimensional dense vector. This vector is a
+    numerical "fingerprint" of the chunk's meaning — chunks with similar
+    meaning have vectors that are close together in 384-dimensional space.
+
+    The model runs entirely locally using ONNX Runtime. No text is sent
+    anywhere during this step. On first use the model weights (~90 MB) are
+    downloaded once from HuggingFace and cached locally.
+
+    The same model is later used to embed the user's question, ensuring that
+    the question and the documents share the same vector space and can be
+    compared meaningfully.
+
+  Step 5: Storing in ChromaDB
+
+    ChromaDB is a vector database. It stores each chunk as a triplet:
+
+      (id, vector, metadata)
+
+      id        unique string like "doc_0", "doc_1", ...
+      vector    384-float array produced by the embedding model
+      metadata  {"source": "filename.docx"}
+
+    The vectors are written to disk in ./chroma_db/ using a persistent client.
+    Internally ChromaDB uses a HNSW index (Hierarchical Navigable Small World
+    graph), a data structure that allows approximate nearest-neighbor search
+    in sub-linear time — i.e. finding the most similar vectors without
+    scanning every stored vector one by one.
+
+    Chunks are sent to ChromaDB in batches of 100 to avoid memory pressure
+    with large document sets.
+
+
+  PHASE 2 — QUERY  (ask)
+  ───────────────────────
+
+  Step 1: Question embedding
+
+    When you type a question, it is passed through the same all-MiniLM-L6-v2
+    model that was used during indexing. This produces a 384-dimensional
+    query vector that represents the semantic meaning of your question.
+
+    Because both documents and question were embedded by the same model, their
+    vectors live in the same space. A question about "the author's childhood"
+    will produce a vector close to chunks that discuss the author's early life,
+    even if the exact words differ.
+
+  Step 2: Vector similarity search  (ChromaDB)
+
+    ChromaDB receives the query vector and searches the HNSW index for the
+    TOP_K (default: 5) stored vectors that are geometrically closest to it.
+    Closeness is measured by cosine similarity — the cosine of the angle
+    between two vectors. A cosine similarity of 1.0 means identical meaning;
+    0.0 means unrelated.
+
+    The search returns the 5 most semantically relevant chunks along with
+    their source file names. This is the retrieval step — the R in RAG.
+
+  Step 3: Prompt construction
+
+    The retrieved chunks are assembled into a single context block, separated
+    by dividers and labelled with their source file:
+
+      [document1.docx]
+      ...chunk text...
+
+      ---
+
+      [document2.docx]
+      ...chunk text...
+
+    This context is inserted into a structured prompt template alongside the
+    user's question. The prompt explicitly instructs the model to answer using
+    ONLY the provided context, and to reply with "IRRELEVANT" if the context
+    does not contain sufficient information. This constraint prevents the model
+    from drawing on its own training data and fabricating answers.
+
+  Step 4: LLM generation  (Ollama Cloud)
+
+    The fully assembled prompt is sent to the Ollama Cloud API over HTTPS. The
+    Bearer token from OLLAMA_API_KEY is attached as an Authorization header.
+    The cloud model (gpt-oss:120b-cloud) reads the prompt and generates an
+    answer grounded in the provided context.
+
+    This is the generation step — the G in RAG. The model at this point is
+    acting as a reader and summarizer, not as a knowledge base. The knowledge
+    comes from the retrieved chunks; the model contributes language fluency
+    and reasoning.
+
+  Step 5: Response filtering
+
+    If the model replies with the exact word "IRRELEVANT", the system surfaces
+    a clean "[No relevant answer found]" message rather than exposing the raw
+    model token. Any other response is returned directly to the terminal.
+
+
+  DATA FLOW SUMMARY
+  ─────────────────
+
+  Indexing:
+
+    .docx
+      └─ python-docx extracts paragraphs
+           └─ lowercased, joined into full text
+                └─ split into overlapping 500-word chunks
+                     └─ each chunk embedded → 384-dim vector  [LOCAL]
+                          └─ (id, vector, metadata) written to ChromaDB  [LOCAL]
+
+  Query:
+
+    user question
+      └─ embedded → 384-dim query vector  [LOCAL]
+           └─ HNSW nearest-neighbor search in ChromaDB  [LOCAL]
+                └─ top-5 chunks retrieved with source labels  [LOCAL]
+                     └─ prompt assembled: context + question
+                          └─ sent to Ollama Cloud API  [NETWORK]
+                               └─ LLM generates answer
+                                    └─ printed to terminal
+
+
+  WHAT STAYS LOCAL vs. WHAT LEAVES THE MACHINE
+  ─────────────────────────────────────────────
+
+    Operation                          Local   Network
+    ──────────────────────────────────────────────────
+    Document parsing                     YES
+    Text chunking                        YES
+    Embedding (indexing)                 YES
+    Vector storage (ChromaDB)            YES
+    Embedding (query time)               YES
+    Vector similarity search             YES
+    LLM answer generation                        YES *
+
+    * Only the retrieved context (up to 5 chunks) and the question text are
+      transmitted. Raw document files never leave the machine.
+
+
+NOTES
+-----
+
+  - The embedding model runs entirely locally. No document content is sent
+    to any external service during indexing.
+  - Only the retrieved context and your question are sent to Ollama Cloud
+    for answer generation.
+  - The system returns "No relevant context found" when no chunks meet the
+    similarity threshold, rather than hallucinating an answer.
