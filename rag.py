@@ -38,13 +38,25 @@ TOP_K            = 5
 PROMPT = """\
 You are a helpful assistant. Use ONLY the context below to answer.
 If the context does not contain enough information, reply with exactly: IRRELEVANT
-show the word index of result data if there is more than show all indexes for each result
+
 Context:
 {context}
 
 Question: {question}
 
-Answer:"""
+Before writing your answer, reason through it step by step.
+For every fact or phrase you use, state exactly where it comes from:
+  - quote the relevant part of the context and name the source file, OR
+  - mark it as [language/grammar] if it is just a connecting word with no factual content.
+
+Respond in this exact format:
+
+THINKING:
+- [fact or phrase you will use] -> [source: filename.docx, chunk excerpt] or [language/grammar]
+- ...
+
+ANSWER:
+[your final answer]"""
 
 # ─── Text splitting (no external deps) ───────────────────────────────────────
 
@@ -136,8 +148,27 @@ def ask(question: str, collection: chromadb.Collection, api_key: str) -> str:
         headers={"Authorization": f"Bearer {api_key}"},
     )
     response = client.generate(model=LLM_MODEL, prompt=prompt)
-    answer = response["response"].strip()
-    return "[No relevant answer found]" if answer.upper() == "IRRELEVANT" else answer
+    raw = response["response"].strip()
+
+    if raw.upper() == "IRRELEVANT":
+        return "[No relevant answer found]"
+
+    # Parse THINKING / ANSWER blocks
+    thinking, answer = "", raw
+    if "THINKING:" in raw and "ANSWER:" in raw:
+        parts = raw.split("ANSWER:", 1)
+        thinking_block = parts[0].replace("THINKING:", "").strip()
+        answer = parts[1].strip()
+
+        print("\n  Brain line:")
+        print("  " + "-" * 51)
+        for line in thinking_block.splitlines():
+            line = line.strip()
+            if line:
+                print(f"  {line}")
+        print("  " + "-" * 51 + "\n")
+
+    return answer
 
 # ─── Main ─────────────────────────────────────────────────────────────────────
 
