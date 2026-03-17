@@ -13,66 +13,48 @@ Environment Variables (.env):
     OLLAMA_API_KEY   - Your Ollama Cloud API key (required)
 """
 
-import sys
 import os
+import sys
 from pathlib import Path
 
-from dotenv import load_dotenv
-from docx import Document
 import chromadb
-from chromadb.utils.embedding_functions import DefaultEmbeddingFunction
 import ollama
+from chromadb.utils.embedding_functions import DefaultEmbeddingFunction
+from docx import Document
+from dotenv import load_dotenv
 
 load_dotenv()
 
 # ─── Configuration ────────────────────────────────────────────────────────────
 
 OLLAMA_CLOUD_URL = "https://ollama.com"
-LLM_MODEL        = "gpt-oss:120b-cloud"
-EMBED_MODEL      = "all-MiniLM-L6-v2"  # chromadb default ONNX model, downloads once
-CHROMA_DIR       = "./chroma_db"
-CHUNK_SIZE       = 500    # words
-CHUNK_OVERLAP    = 50     # words
-TOP_K            = 5
+LLM_MODEL = "gpt-oss:120b-cloud"
+EMBED_MODEL = "all-MiniLM-L6-v2"  # chromadb default ONNX model, downloads once
+CHROMA_DIR = "./chroma_db"
+CHUNK_SIZE = 500  # words
+CHUNK_OVERLAP = 50  # words
+TOP_K = 5
 
 PROMPT = """\
-You are a strict document extraction system. You have no knowledge, memory, \
-or intelligence of your own. You do not know anything that is not written \
-in the context below.
+You are a helpful assistant. Answer the question using ONLY the context provided below.
 
-ABSOLUTE RULES:
-  1. Every piece of information in your answer must be traceable word-for-word \
-to the context below.
-  2. Do not add, expand, define, or describe anything beyond what is literally \
-written in the context.
-  3. Do not use any external source — not your training data, not general \
-knowledge, not inference, not reasoning from prior understanding.
-  4. Do not paraphrase in a way that introduces meaning not present in the context.
-  5. If the answer is not fully and explicitly contained in the context, reply \
-with exactly one word: IRRELEVANT
+Rules:
+1. Use a natural, conversational tone.
+2. Do not use any outside knowledge or prior training data.
+3. If the answer is not explicitly in the context, simply say: "I'm sorry, I couldn't find that information in the documents."
 
 Context:
 {context}
 
 Question: {question}
-
-Before writing your answer, verify every word you plan to write against the \
-context. If you cannot point to the exact text in the context that supports it, \
-remove it.
-
-Respond in this exact format:
-
-THINKING:
-- [word or phrase you will use] -> [exact quote from context that proves it] \
-or [language/grammar] if it is a connecting word only
-- ...
-
-ANSWER:
-[your answer using only words traceable to the context above]"""
+"""
 
 # ─── Text splitting (no external deps) ───────────────────────────────────────
 
-def split_text(text: str, size: int = CHUNK_SIZE, overlap: int = CHUNK_OVERLAP) -> list[str]:
+
+def split_text(
+    text: str, size: int = CHUNK_SIZE, overlap: int = CHUNK_OVERLAP
+) -> list[str]:
     words = text.split()
     chunks, i = [], 0
     step = size - overlap
@@ -81,7 +63,9 @@ def split_text(text: str, size: int = CHUNK_SIZE, overlap: int = CHUNK_OVERLAP) 
         i += step
     return chunks
 
+
 # ─── Helpers ──────────────────────────────────────────────────────────────────
+
 
 def get_api_key() -> str:
     key = os.getenv("OLLAMA_API_KEY", "").strip()
@@ -114,7 +98,9 @@ def load_and_index(folder: str) -> chromadb.Collection:
     idx = 0
     for path in docx_files:
         doc = Document(str(path))
-        text = "\n".join(p.text.strip() for p in doc.paragraphs if p.text.strip()).lower()
+        text = "\n".join(
+            p.text.strip() for p in doc.paragraphs if p.text.strip()
+        ).lower()
         if not text.strip():
             print(f"  [SKIP] {path.name} — no text")
             continue
@@ -213,7 +199,9 @@ def ask(question: str, collection: chromadb.Collection, api_key: str) -> None:
             print(buf, end="", flush=True)
     print("\n")
 
+
 # ─── Main ─────────────────────────────────────────────────────────────────────
+
 
 def main():
     if len(sys.argv) < 2:
