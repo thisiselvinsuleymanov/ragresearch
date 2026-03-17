@@ -21,20 +21,20 @@ import xml.etree.ElementTree as ET
 from pathlib import Path
 
 import chromadb
-import fitz                      # pymupdf   — pip install pymupdf
+import fitz  # pymupdf   — pip install pymupdf
 import ollama
-import openpyxl                  # pip install openpyxl
+import openpyxl  # pip install openpyxl
 from chromadb.utils.embedding_functions import DefaultEmbeddingFunction
 from docx import Document
 from dotenv import load_dotenv
-from pptx import Presentation    # pip install python-pptx
+from pptx import Presentation  # pip install python-pptx
 
 load_dotenv()
 
 # ─── Configuration ────────────────────────────────────────────────────────────
 
 OLLAMA_CLOUD_URL = "https://ollama.com"
-LLM_MODEL = "llama3.1:8b"
+LLM_MODEL = "gemma3:4b-cloud"
 EMBED_MODEL = "all-MiniLM-L6-v2"  # chromadb default ONNX model, downloads once
 CHROMA_DIR = "./chroma_db"
 CHUNK_SIZE = 500  # words
@@ -42,8 +42,10 @@ CHUNK_OVERLAP = 50  # words
 TOP_K = 3
 
 PROMPT = """\
-Answer using ONLY the context below. Be concise.
-If the answer is not in the context, say: "I couldn't find that in the documents."
+You are a knowledgeable assistant. Answer STRICTLY using the context below — never use outside knowledge.
+Respond naturally like a human in conversation, not as a list or report.
+Detect the language of the question and reply in that same language.
+If the answer is not in the context, say so naturally (e.g. "I couldn't find that in the documents.").
 
 Context:
 {context}
@@ -96,7 +98,9 @@ def extract_text(path: Path) -> str:
     if ext == ".xml":
         try:
             tree = ET.parse(path)
-            return " ".join(el.text.strip() for el in tree.iter() if el.text and el.text.strip())
+            return " ".join(
+                el.text.strip() for el in tree.iter() if el.text and el.text.strip()
+            )
         except Exception:
             return path.read_text(encoding="utf-8", errors="ignore")
 
@@ -153,19 +157,20 @@ def extract_structured_chunks(path: Path) -> list[dict]:
                 continue
             if para.style.name.startswith("Heading"):
                 if current_lines:
-                    chunks.append({
-                        "text": "\n".join(current_lines).lower(),
-                        "heading": current_heading
-                    })
+                    chunks.append(
+                        {
+                            "text": "\n".join(current_lines).lower(),
+                            "heading": current_heading,
+                        }
+                    )
                 current_heading = text
                 current_lines = []
             else:
                 current_lines.append(text)
         if current_lines:
-            chunks.append({
-                "text": "\n".join(current_lines).lower(),
-                "heading": current_heading
-            })
+            chunks.append(
+                {"text": "\n".join(current_lines).lower(), "heading": current_heading}
+            )
         return chunks
 
     # All other formats: extract plain text, split into 300-word chunks
@@ -178,7 +183,7 @@ def extract_structured_chunks(path: Path) -> list[dict]:
     chunks = []
     i = 0
     while i < len(words):
-        chunk_text = " ".join(words[i: i + size]).lower()
+        chunk_text = " ".join(words[i : i + size]).lower()
         chunks.append({"text": chunk_text, "heading": "General"})
         i += step
     return chunks
@@ -196,8 +201,15 @@ def get_api_key() -> str:
 
 
 SUPPORTED_EXTENSIONS = {
-    ".txt", ".md", ".json", ".csv", ".xml",
-    ".docx", ".pdf", ".xlsx", ".pptx"
+    ".txt",
+    ".md",
+    ".json",
+    ".csv",
+    ".xml",
+    ".docx",
+    ".pdf",
+    ".xlsx",
+    ".pptx",
 }
 
 
@@ -208,7 +220,8 @@ def load_and_index(folder: str) -> tuple[chromadb.Collection, list[Path]]:
     collection_name = Path(folder).resolve().name.replace(" ", "_")[:50] or "docs"
 
     all_files = sorted(
-        p for p in Path(folder).iterdir()
+        p
+        for p in Path(folder).iterdir()
         if p.is_file() and p.suffix.lower() in SUPPORTED_EXTENSIONS
     )
 
@@ -216,7 +229,9 @@ def load_and_index(folder: str) -> tuple[chromadb.Collection, list[Path]]:
     existing = [c.name for c in client.list_collections()]
     if collection_name in existing:
         print(f"[INFO] Loading existing index '{collection_name}'...")
-        return client.get_collection(name=collection_name, embedding_function=ef), all_files
+        return client.get_collection(
+            name=collection_name, embedding_function=ef
+        ), all_files
 
     if not all_files:
         print(f"[ERROR] No supported files found in '{folder}'")
@@ -235,10 +250,7 @@ def load_and_index(folder: str) -> tuple[chromadb.Collection, list[Path]]:
         for item in structured:
             all_texts.append(item["text"])
             all_ids.append(f"doc_{idx}")
-            all_metas.append({
-                "source": path.name,
-                "heading": item["heading"]
-            })
+            all_metas.append({"source": path.name, "heading": item["heading"]})
             idx += 1
         print(f"  [OK]   {path.name} — {len(structured)} chunks")
 
